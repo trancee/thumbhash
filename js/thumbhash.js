@@ -1,6 +1,8 @@
 const LUMINANCE_TERMS = 4 // Use 3 luminance terms (3x3 = 9 coefficients).
 const CHROMINANCE_TERMS = 3 // Use 2 chrominance terms (2x2 = 4 coefficients for each, totaling 8 coefficients).
 
+const ac_start = 5
+
 /**
  * Encodes an RGBA image to a ThumbHash optimized for squared profile photos (14 bytes).
  * 
@@ -11,12 +13,12 @@ const CHROMINANCE_TERMS = 3 // Use 2 chrominance terms (2x2 = 4 coefficients for
  */
 export function rgbaToThumbHash(w, h, rgba) {
   if (w > 100 || h > 100) throw new Error(`${w}x${h} doesn't fit in 100x100`)
-  let { PI, round, max, cos, abs } = Math
+  const { PI, round, max, cos, abs } = Math
 
   // Determine the average color
   let avg_r = 0, avg_g = 0, avg_b = 0
   for (let i = 0, j = 0; i < w * h; i++, j += 4) {
-    let alpha = rgba[j + 3] / 255
+    const alpha = rgba[j + 3] / 255
 
     avg_r += alpha / 255 * rgba[j]
     avg_g += alpha / 255 * rgba[j + 1]
@@ -27,17 +29,17 @@ export function rgbaToThumbHash(w, h, rgba) {
   avg_b /= w * h
 
   // Remove the alpha handling (set all pixels as non-transparent)
-  let l = [] // luminance
-  let p = [] // yellow - blue
-  let q = [] // red - green
+  const l = [] // luminance
+  const p = [] // yellow - blue
+  const q = [] // red - green
 
   // Convert the image from RGBA to LPQ (no alpha channel)
   for (let i = 0, j = 0; i < w * h; i++, j += 4) {
-    let alpha = rgba[j + 3] / 255
+    const alpha = rgba[j + 3] / 255
 
-    let r = avg_r * (1 - alpha) + alpha / 255 * rgba[j]
-    let g = avg_g * (1 - alpha) + alpha / 255 * rgba[j + 1]
-    let b = avg_b * (1 - alpha) + alpha / 255 * rgba[j + 2]
+    const r = avg_r * (1 - alpha) + alpha / 255 * rgba[j]
+    const g = avg_g * (1 - alpha) + alpha / 255 * rgba[j + 1]
+    const b = avg_b * (1 - alpha) + alpha / 255 * rgba[j + 2]
 
     l[i] = (r + g + b) / 3
     p[i] = (r + g) / 2 - b
@@ -45,17 +47,22 @@ export function rgbaToThumbHash(w, h, rgba) {
   }
 
   // Encode using the DCT into DC (constant) and normalized AC (varying) terms
-  let encodeChannel = (channel, nx, ny) => {
+  let encodeChannel = (channel, n) => {
     let dc = 0, ac = [], scale = 0, fx = []
-    for (let cy = 0; cy < ny; cy++) {
-      for (let cx = 0; cx * ny < nx * (ny - cy); cx++) {
+
+    for (let cy = 0; cy < n; cy++) {
+      for (let cx = 0; cx * n < n * (n - cy); cx++) {
         let f = 0
+
         for (let x = 0; x < w; x++)
           fx[x] = cos(PI / w * cx * (x + 0.5))
+
         for (let y = 0; y < h; y++)
           for (let x = 0, fy = cos(PI / h * cy * (y + 0.5)); x < w; x++)
             f += channel[x + y * w] * fx[x] * fy
+
         f /= w * h
+
         if (cx || cy) {
           ac.push(f)
           scale = max(scale, abs(f))
@@ -64,27 +71,48 @@ export function rgbaToThumbHash(w, h, rgba) {
         }
       }
     }
+
     if (scale)
       for (let i = 0; i < ac.length; i++)
         ac[i] = 0.5 + 0.5 / scale * ac[i]
+
     return [dc, ac, scale]
   }
 
-  let [l_dc, l_ac, l_scale] = encodeChannel(l, LUMINANCE_TERMS, LUMINANCE_TERMS)  // Adjust to 3x3 for luminance
-  let [p_dc, p_ac, p_scale] = encodeChannel(p, CHROMINANCE_TERMS, CHROMINANCE_TERMS)  // Adjust to 2x2 for chrominance
-  let [q_dc, q_ac, q_scale] = encodeChannel(q, CHROMINANCE_TERMS, CHROMINANCE_TERMS)  // Adjust to 2x2 for chrominance
+  const [l_dc, l_ac, l_scale] = encodeChannel(l, LUMINANCE_TERMS)  // Adjust to 3x3 for luminance
+  const [p_dc, p_ac, p_scale] = encodeChannel(p, CHROMINANCE_TERMS)  // Adjust to 2x2 for chrominance
+  const [q_dc, q_ac, q_scale] = encodeChannel(q, CHROMINANCE_TERMS)  // Adjust to 2x2 for chrominance
 
   // Write the constants
-  let header24 = round(63 * l_dc) | (round(31.5 + 31.5 * p_dc) << 6) | (round(31.5 + 31.5 * q_dc) << 12) | (round(31 * l_scale) << 18)
-  let header16 = (round(63 * p_scale) << 3) | (round(63 * q_scale) << 9)
-  let hash = [header24 & 255, (header24 >> 8) & 255, header24 >> 16, header16 & 255, header16 >> 8]
+  /*
+    l_dc : 6
+    p_dc : 6
+    q_dc : 6
+    l_scale : 5
+  */
+  const header24 = round(63 * l_dc) | (round(31.5 + 31.5 * p_dc) << 6) | (round(31.5 + 31.5 * q_dc) << 12) | (round(31 * l_scale) << 18)
+  console.log(`l_dc=${l_dc} [${round(63 * l_dc)}], p_dc=${p_dc} [${round(31.5 + 31.5 * p_dc)}], q_dc=${q_dc} [${round(31.5 + 31.5 * q_dc)}], l_scale=${l_scale} [${round(31 * l_scale)}], ${header24.toString(16)})}`)
+
+  /*
+    l_count : 3
+    p_scale : 6
+    q_scale : 6
+  */
+  const header16 = (round(63 * p_scale) << 3) | (round(63 * q_scale) << 9)
+  console.log(`p_scale=${p_scale} [${round(63 * p_scale)}], q_scale=${q_scale} [${round(63 * q_scale)}]`)
+
+  const hash = [header24 & 0xff, (header24 >> 8) & 0xff, header24 >> 16, header16 & 0xff, header16 >> 8]
 
   // Write the varying factors
-  let ac_start = 5
+  /*
+    l_ac[] : 4
+    p_ac[] : 4
+    q_ac[] : 4
+  */
   let ac_index = 0
   for (let ac of [l_ac, p_ac, q_ac])
     for (let f of ac)
-      hash[ac_start + (ac_index >> 1)] |= round(15 * f) << ((ac_index++ & 1) << 2)
+      hash[ac_start + (ac_index >> 1)] |= round(0x0f * f) << ((ac_index++ & 1) << 2)
 
   return new Uint8Array(hash)
 }
@@ -96,36 +124,44 @@ export function rgbaToThumbHash(w, h, rgba) {
  * @returns The width, height, and pixels of the rendered placeholder image.
  */
 export function thumbHashToRGBA(hash) {
-  let { PI, min, max, cos, round } = Math
+  const { PI, min, max, cos, round } = Math
 
   // Read the constants
-  let header24 = hash[0] | (hash[1] << 8) | (hash[2] << 16)
-  let header16 = hash[3] | (hash[4] << 8)
-  let l_dc = (header24 & 63) / 63
-  let p_dc = ((header24 >> 6) & 63) / 31.5 - 1
-  let q_dc = ((header24 >> 12) & 63) / 31.5 - 1
-  let l_scale = ((header24 >> 18) & 31) / 31
-  let p_scale = ((header16 >> 3) & 63) / 63
-  let q_scale = ((header16 >> 9) & 63) / 63
-  let rgba = new Uint8Array(32 * 32 * 4), fx = [], fy = []
+  const header24 = hash[0] | (hash[1] << 8) | (hash[2] << 16)
+  const header16 = hash[3] | (hash[4] << 8)
+
+  const l_dc = (header24 & 63) / 63
+  const p_dc = ((header24 >> 6) & 63) / 31.5 - 1
+  const q_dc = ((header24 >> 12) & 63) / 31.5 - 1
+  const l_scale = ((header24 >> 18) & 31) / 31
+  const p_scale = ((header16 >> 3) & 63) / 63
+  const q_scale = ((header16 >> 9) & 63) / 63
+
+  // console.log(`l_dc=${l_dc}, p_dc=${p_dc}, q_dc=${q_dc}, l_scale=${l_scale}, p_scale=${p_scale}, q_scale=${q_scale}`)
+
+  const rgba = new Uint8Array(32 * 32 * 4), fx = [], fy = []
 
   // Read the varying factors
-  let ac_start = 5
   let ac_index = 0
-  let decodeChannel = (nx, ny, scale) => {
+  const decodeChannel = (n, scale) => {
     let ac = []
-    for (let cy = 0; cy < ny; cy++)
-      for (let cx = cy ? 0 : 1; cx * ny < nx * (ny - cy); cx++)
+
+    for (let cy = 0; cy < n; cy++)
+      for (let cx = cy ? 0 : 1; cx * n < n * (n - cy); cx++)
         ac.push((((hash[ac_start + (ac_index >> 1)] >> ((ac_index++ & 1) << 2)) & 15) / 7.5 - 1) * scale)
+
     return ac
   }
 
-  let l_ac = decodeChannel(LUMINANCE_TERMS, LUMINANCE_TERMS, l_scale)
-  let p_ac = decodeChannel(CHROMINANCE_TERMS, CHROMINANCE_TERMS, p_scale * 1.25)
-  let q_ac = decodeChannel(CHROMINANCE_TERMS, CHROMINANCE_TERMS, q_scale * 1.25)
+  const l_ac = decodeChannel(LUMINANCE_TERMS, l_scale)
+  const p_ac = decodeChannel(CHROMINANCE_TERMS, p_scale * 1.25)
+  const q_ac = decodeChannel(CHROMINANCE_TERMS, q_scale * 1.25)
+
+  // console.log(`l_ac=${l_ac}, p_ac=${p_ac}, q_ac=${q_ac}`)
 
   // Decode using the DCT into RGB
-  let w = 32, h = 32
+  const w = 32, h = 32
+
   for (let y = 0, i = 0; y < h; y++) {
     for (let x = 0; x < w; x++, i += 4) {
       let l = l_dc, p = p_dc, q = q_dc
@@ -144,15 +180,17 @@ export function thumbHashToRGBA(hash) {
       // Decode P and Q
       for (let cy = 0, j = 0; cy < CHROMINANCE_TERMS; cy++)
         for (let cx = cy ? 0 : 1, fy2 = fy[cy] * 2; cx * CHROMINANCE_TERMS < CHROMINANCE_TERMS * (CHROMINANCE_TERMS - cy); cx++, j++) {
-          let f = fx[cx] * fy2
+          const f = fx[cx] * fy2
+
           p += p_ac[j] * f
           q += q_ac[j] * f
         }
 
       // Convert to RGB
-      let b = l - 2 / 3 * p
-      let r = (3 * l - b + q) / 2
-      let g = r - q
+      const b = l - 2 / 3 * p
+      const r = (3 * l - b + q) / 2
+      const g = r - q
+
       rgba[i] = max(0, 255 * min(1, r))
       rgba[i + 1] = max(0, 255 * min(1, g))
       rgba[i + 2] = max(0, 255 * min(1, b))
