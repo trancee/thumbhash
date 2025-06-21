@@ -1,7 +1,29 @@
-const LUMINANCE_TERMS = 4 // Use 3 luminance terms (3x3 = 9 coefficients).
-const CHROMINANCE_TERMS = 3 // Use 2 chrominance terms (2x2 = 4 coefficients for each, totaling 8 coefficients).
+const config = {
+  LUMINANCE_TERMS: 7, // Use 3 luminance terms (3x3 = 9 coefficients).
+  CHROMINANCE_TERMS: 3, // Use 2 chrominance terms (2x2 = 4 coefficients for each, totaling 8 coefficients).
+}
 
 const ac_start = 5
+
+/**
+ * Set the configuration for ThumbHash encoding.
+ * 
+ * @param {*} luminanceTerms Set the number of luminance terms (1 to 10).
+ *                           1 term is a single constant, 2 terms are a 2x2 grid, 3 terms are a 3x3 grid, and 4 terms are a 4x4 grid.
+ * @param {*} chrominanceTerms Set the number of chrominance terms (1 to 10).
+ *                             1 term is a single constant, 2 terms are a 2x2 grid, and 3 terms are a 3x3 grid.
+ */
+export function configThumbHash(luminanceTerms = 7, chrominanceTerms = 3) {
+  if (luminanceTerms < 1 || luminanceTerms > 10) {
+    throw new Error(`Luminance terms must be between 1 and 10, got ${luminanceTerms}`);
+  }
+  if (chrominanceTerms < 1 || chrominanceTerms > 10) {
+    throw new Error(`Chrominance terms must be between 1 and 10, got ${chrominanceTerms}`);
+  }
+  
+  config.LUMINANCE_TERMS = luminanceTerms;
+  config.CHROMINANCE_TERMS = chrominanceTerms;
+}
 
 /**
  * Encodes an RGBA image to a ThumbHash optimized for squared profile photos (14 bytes).
@@ -79,9 +101,9 @@ export function rgbaToThumbHash(w, h, rgba) {
     return [dc, ac, scale]
   }
 
-  const [l_dc, l_ac, l_scale] = encodeChannel(l, LUMINANCE_TERMS)  // Adjust to 3x3 for luminance
-  const [p_dc, p_ac, p_scale] = encodeChannel(p, CHROMINANCE_TERMS)  // Adjust to 2x2 for chrominance
-  const [q_dc, q_ac, q_scale] = encodeChannel(q, CHROMINANCE_TERMS)  // Adjust to 2x2 for chrominance
+  const [l_dc, l_ac, l_scale] = encodeChannel(l, config.LUMINANCE_TERMS)  // Adjust to 3x3 for luminance
+  const [p_dc, p_ac, p_scale] = encodeChannel(p, config.CHROMINANCE_TERMS)  // Adjust to 2x2 for chrominance
+  const [q_dc, q_ac, q_scale] = encodeChannel(q, config.CHROMINANCE_TERMS)  // Adjust to 2x2 for chrominance
 
   // Write the constants
   /*
@@ -91,7 +113,7 @@ export function rgbaToThumbHash(w, h, rgba) {
     l_scale : 5
   */
   const header24 = round(63 * l_dc) | (round(31.5 + 31.5 * p_dc) << 6) | (round(31.5 + 31.5 * q_dc) << 12) | (round(31 * l_scale) << 18)
-  console.log(`l_dc=${l_dc} [${round(63 * l_dc)}], p_dc=${p_dc} [${round(31.5 + 31.5 * p_dc)}], q_dc=${q_dc} [${round(31.5 + 31.5 * q_dc)}], l_scale=${l_scale} [${round(31 * l_scale)}], ${header24.toString(16)})}`)
+  // console.log(`l_dc=${l_dc} [${round(63 * l_dc)}], p_dc=${p_dc} [${round(31.5 + 31.5 * p_dc)}], q_dc=${q_dc} [${round(31.5 + 31.5 * q_dc)}], l_scale=${l_scale} [${round(31 * l_scale)}], ${header24.toString(16)})}`)
 
   /*
     l_count : 3
@@ -99,7 +121,7 @@ export function rgbaToThumbHash(w, h, rgba) {
     q_scale : 6
   */
   const header16 = (round(63 * p_scale) << 3) | (round(63 * q_scale) << 9)
-  console.log(`p_scale=${p_scale} [${round(63 * p_scale)}], q_scale=${q_scale} [${round(63 * q_scale)}]`)
+  // console.log(`p_scale=${p_scale} [${round(63 * p_scale)}], q_scale=${q_scale} [${round(63 * q_scale)}]`)
 
   const hash = [header24 & 0xff, (header24 >> 8) & 0xff, header24 >> 16, header16 & 0xff, header16 >> 8]
 
@@ -153,9 +175,9 @@ export function thumbHashToRGBA(hash) {
     return ac
   }
 
-  const l_ac = decodeChannel(LUMINANCE_TERMS, l_scale)
-  const p_ac = decodeChannel(CHROMINANCE_TERMS, p_scale * 1.25)
-  const q_ac = decodeChannel(CHROMINANCE_TERMS, q_scale * 1.25)
+  const l_ac = decodeChannel(config.LUMINANCE_TERMS, l_scale)
+  const p_ac = decodeChannel(config.CHROMINANCE_TERMS, p_scale * 1.25)
+  const q_ac = decodeChannel(config.CHROMINANCE_TERMS, q_scale * 1.25)
 
   // console.log(`l_ac=${l_ac}, p_ac=${p_ac}, q_ac=${q_ac}`)
 
@@ -167,19 +189,19 @@ export function thumbHashToRGBA(hash) {
       let l = l_dc, p = p_dc, q = q_dc
 
       // Precompute the coefficients
-      for (let cx = 0, n = LUMINANCE_TERMS; cx < n; cx++)
+      for (let cx = 0, n = config.LUMINANCE_TERMS; cx < n; cx++)
         fx[cx] = cos(PI / w * (x + 0.5) * cx)
-      for (let cy = 0, n = LUMINANCE_TERMS; cy < n; cy++)
+      for (let cy = 0, n = config.LUMINANCE_TERMS; cy < n; cy++)
         fy[cy] = cos(PI / h * (y + 0.5) * cy)
 
       // Decode L
-      for (let cy = 0, j = 0; cy < LUMINANCE_TERMS; cy++)
-        for (let cx = cy ? 0 : 1, fy2 = fy[cy] * 2; cx * LUMINANCE_TERMS < LUMINANCE_TERMS * (LUMINANCE_TERMS - cy); cx++, j++)
+      for (let cy = 0, j = 0; cy < config.LUMINANCE_TERMS; cy++)
+        for (let cx = cy ? 0 : 1, fy2 = fy[cy] * 2; cx * config.LUMINANCE_TERMS < config.LUMINANCE_TERMS * (config.LUMINANCE_TERMS - cy); cx++, j++)
           l += l_ac[j] * fx[cx] * fy2
 
       // Decode P and Q
-      for (let cy = 0, j = 0; cy < CHROMINANCE_TERMS; cy++)
-        for (let cx = cy ? 0 : 1, fy2 = fy[cy] * 2; cx * CHROMINANCE_TERMS < CHROMINANCE_TERMS * (CHROMINANCE_TERMS - cy); cx++, j++) {
+      for (let cy = 0, j = 0; cy < config.CHROMINANCE_TERMS; cy++)
+        for (let cx = cy ? 0 : 1, fy2 = fy[cy] * 2; cx * config.CHROMINANCE_TERMS < config.CHROMINANCE_TERMS * (config.CHROMINANCE_TERMS - cy); cx++, j++) {
           const f = fx[cx] * fy2
 
           p += p_ac[j] * f

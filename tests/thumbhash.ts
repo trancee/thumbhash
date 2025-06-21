@@ -1,6 +1,6 @@
 import sharp from "sharp"
 import checksum from "checksum"
-import { rgbaToThumbHash, thumbHashToRGBA } from "../js/thumbhash"
+import { configThumbHash, rgbaToThumbHash, thumbHashToRGBA } from "../js/thumbhash"
 
 const fs = require('node:fs')
 
@@ -18,14 +18,15 @@ const process = async (file) => {
         file = file.replace(".jpeg", ".png")
         const image = thumbHashToRGBA(binaryThumbHash)
         console.log(checksum(image.rgba, { algorithm: "sha256" }), "", Buffer.from(binaryThumbHash).toString("hex"))
-        const data = await sharp(image.rgba as Uint8Array, {
+        const _ = sharp(image.rgba as Uint8Array, {
             raw: {
                 width: image.w,
                 height: image.h,
                 channels: 4,
             }
-        }).png().toBuffer()
-        //.toFile(file)
+        }).png()
+        await _.toFile(file)
+        const data = await _.toBuffer()
         console.log(checksum(data, { algorithm: "sha256" }), "", file)
         // console.log(checksum(file, { algorithm: "sha256" }), "", file)
 
@@ -35,6 +36,8 @@ const process = async (file) => {
 }
 
 const main = async () => {
+    configThumbHash(3, 3)
+
     for (const file of files) {
         // console.log(`Processing ${file}...`)
         await process(file)
